@@ -1,2 +1,2 @@
 # coriolis
-coriolis is a nim bot for rotating things
+coriolis is an irc bot for rotating things
