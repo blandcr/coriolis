@@ -51,26 +51,19 @@ proc LoadModule(ModuleName : string) : LibHandle =
 
 #==--- Constants
 #TODO(blandcr) - load this from a file or something
-const
-    Password = "CORGIFREEZER!"
 
 #==--- Globals
 
 var
     AuthorizedNicks : seq[string] = @[]
     
-    IrcServer = "irc.efnet.net"
-    Channels  = @["#corgifreezer"]
-    Name      = "coriolis"
+    IrcServer : string
+    Channels  : seq[string] = @[]
+    Name      : string
 
-    IrcThing = newIrc(
-        address   = IrcServer,
-        nick      = Name,
-        user      = Name,
-        realname  = Name,
-        joinChans = Channels
-    )
+    Password : string
 
+    IrcThing : PIrc
 #==--- Default Commands
 
 proc TokenizeMessage(Event : TIrcEvent) : seq[string] =
@@ -153,6 +146,43 @@ proc LoADJErKS() : seq[string] =
                 res.add(jstr)
     return res
 
+proc LoadConfig(ConfigFile : string) : bool =
+    let Config = readFile(ConfigFile)
+    proc ProcessConfigLine(ConfigLine : string) : seq[string] =
+        let Tokens = ConfigLine.split(":")
+        let OptionName = if (len Tokens) > 0 : toLower strip Tokens[0]
+                         else                : nil
+        let SeparatorIndex = ConfigLine.find(":")
+        if OptionName == nil or SeparatorIndex == -1:
+            return nil
+        else:
+            return @[
+                OptionName, strip ConfigLine[SeparatorIndex+1 .. ConfigLine.high]
+            ]
+
+    for Line in (splitlines Config):
+        let OptionInfo = ProcessConfigLine(Line)
+        if OptionInfo == nil:
+            continue
+        let OptionName  = OptionInfo[0]
+        let OptionValue = OptionInfo[1]
+        
+        echo "(II) Config : Option is '" &
+             OptionName                  &
+             "' and value is '"          &
+             OptionValue                 &
+             "'"
+
+        case OptionName
+        of "nick"     : Name      = OptionValue
+        of "server"   : IrcServer = OptionValue
+        of "channels" :
+            for Channel in split(OptionValue, ","):
+                Channels.add(strip(Channel))
+        of "password" : Password  = OptionValue
+    return true
+
+
 let JerkLines = LoadJerks()
         
 proc JErKOff(Event : TIrcEvent) : string =
@@ -172,6 +202,33 @@ proc HandleExit(Tokens : seq[string]) =
     quit(0)
 
 proc HandlePrivMsg(Event : TIrcEvent)
+
+#==--- This stuff should be in a function somewhere or something. ugh. -----==##
+import parseopt
+var ConfigSpecified = false
+for Kind, Key, Value in getopt():
+    case Key
+    of "file":
+        echo Value
+        if existsFile(Value):
+            ConfigSpecified = LoadConfig(Value)
+        else:
+            echo "(EE) Invalid configuration file specified. Exiting."
+            quit(0)
+
+if not ConfigSpecified:
+    echo "(EE) No config file specified!!! Exiting."
+    quit(0)
+
+IrcThing = newIrc(
+    address   = IrcServer,
+    nick      = Name,
+    user      = Name,
+    realname  = Name,
+    joinChans = Channels
+)
+
+#==--- The part that does stuff --------------------------------------------==##
 
 IrcThing.connect()
 
