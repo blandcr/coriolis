@@ -1,7 +1,144 @@
 import iRc, sTrUtIlS, mATH
 
-# TODO(blandcr) - accept these as command line arguments
+import dynlib, os, tables, sets
 
+
+###############
+
+##==--- Module System ------------------------------------------------------==##
+
+##==--- Types
+type
+    TCommandProc  = proc(Event : TIrcEvent) : string
+    TCommandEntry = object
+        Proc : TCommandProc
+        Key  : string
+
+##==--- Constants
+# TODO(blandcr) - get this from a config file
+let ModulePath = "./modules"
+
+##==--- Globals
+var
+    CommandTable = initTable[string, TCommandProc]()
+
+##==--- Procs
+proc RegisterCommands(Commands : seq[TCommandEntry]) : bool =
+    for Command in Commands:
+        if not(CommandTable.hasKey(Command.Key)):
+            CommandTable[Command.Key] = Command.Proc
+    return true
+
+proc LoadModule(ModuleName : string) : LibHandle =
+    const ModuleExtension = when defined(win32)  : ".dll"
+                            elif defined(macosx) : ".dylib"
+                            else                 : ".so"
+    var Module = loadLib(ModulePath & "/" & ModuleName & "." & ModuleExtension)
+    if Module == nil:
+        return Module
+    
+    type
+        TGCP = proc() : seq[TCommandEntry] {.cdecl}
+
+    let GetCommandsProc =
+        cast[TGCP](symAddr(Module, "GetCommands"))
+    let Commands = GetCommandsProc()
+    
+    discard RegisterCommands(Commands)
+    return Module
+
+#==--- Irc Bot Logic -------------------------------------------------------==##
+
+#==--- Constants
+#TODO(blandcr) - load this from a file or something
+const
+    Password = "CORGIFREEZER!"
+
+#==--- Globals
+
+var
+    AuthorizedNicks : seq[string] = @[]
+    
+    IrcServer = "irc.efnet.net"
+    Channels  = @["#corgifreezer"]
+    Name      = "coriolis"
+
+    IrcThing = newIrc(
+        address   = IrcServer,
+        nick      = Name,
+        user      = Name,
+        realname  = Name,
+        joinChans = Channels
+    )
+
+#==--- Default Commands
+
+proc TokenizeMessage(Event : TIrcEvent) : seq[string] =
+    let Message = Event.params[Event.params.high]
+    
+    if (len Message) < 1:
+        echo "(II) TokenizeMessage : nil message, no tokens"
+        return nil
+    else:
+        return split(Message, " ")
+
+proc Authenticate(Event : TIrcEvent) : string =
+    let Tokens = TokenizeMessage(Event)
+    if (len Tokens) >= 2 and Tokens[1] == Password:
+        AuthorizedNicks.add(Event.nick)
+        return "User " & Event.nick & " authorized for me!"
+    else:
+        return "User " & Event.nick & " does not know shit."
+
+proc LoadModule(Event : TIrcEvent) : string =
+    let Tokens = TokenizeMessage(Event)
+    if (len Tokens) == 2:
+        let ModuleName = Tokens[1]
+        let Module = LoadModule(ModuleName)
+        if Module == nil:
+            return "Module '" & ModuleName & "' cannot be found!!!"
+        else:
+            return "Module '" & ModuleName & "' loaded!"
+    else:
+        return "Incorrect syntax. Syntax is: '!load ModuleName'"
+
+proc JoinChannel(Event : TIrcEvent) : string =
+    let Tokens = TokenizeMessage(Event)
+    if (len Tokens) < 2:
+        echo "(EE) JoinChannel : Improper format"
+        return nil
+
+    let Channel = Tokens[1]
+    
+    let Key =
+            if (len Tokens) > 2 :
+                Tokens[2]
+            else :
+                ""
+
+    if Channel in Channels:
+        echo "(II) JoinChannel : Already in this channel!"
+    else:
+        echo "(II) JoinChannel : " & Channel
+        Channels.add(Channel)
+        IrcThing.join(Channel, Key)
+    return nil
+
+proc PartChannel(Event : TIrcEvent) : string =
+    let Tokens = TokenizeMessage(Event)
+    if (len Tokens) < 2:
+        echo "(EE) PartChannel : Improper format"
+        return nil
+
+    let Channel = Tokens[1]
+
+    if Channel in Channels:
+        echo "(II) PartChannel : " & Channel
+        IrcThing.part(Channel, "")
+        Channels.delete(find(Channels, Channel))
+    return
+
+#TODO(blandcr) - move this garbage out into a module
 proc LoADJErKS() : seq[string] =
     var res : seq[string] = @[]
     let JerkXml = reADfIlE("source/jerkcity.xml")
@@ -17,30 +154,26 @@ proc LoADJErKS() : seq[string] =
     return res
 
 let JerkLines = LoadJerks()
+        
+proc JErKOff(Event : TIrcEvent) : string =
+    return JeRkLiNEs[random(JerKLiNes.high)]
+
+discard RegisterCommands(@[
+    TCommandEntry(Key : "!auth", Proc : Authenticate),
+    TCommandEntry(Key : "@load", Proc : LoadModule),
+    TCommandEntry(Key : "@part", Proc : PartChannel),
+    TCommandEntry(Key : "@join", Proc : JoinChannel),
+    TCommandEntry(Key : "!jerk", Proc : JerkOff)
+])
+
+proc HandleExit(Tokens : seq[string]) =
+    send(IrcThing, "QUIT  :snerf borf", sendImmediately=true)
+    close(IrcThing)
+    quit(0)
 
 proc HandlePrivMsg(Event : TIrcEvent)
-proc HandleAuth(Tokens : seq[string], Nick : string)
-proc JErKOff(Tokens : seq[string], Channel : string)
-proc HandleExit(Tokens : seq[string])
-proc JoinChannel(Tokens : seq[string])
-proc PartChannel(Tokens : seq[string])
-
-var
-    IrcServer = "irc.efnet.net"
-    Channels  = @["#corgifreezer"]
-    Name      = "coriolis"
-
-var IrcThing = newIrc(
-    address   = IrcServer,
-    nick      = Name,
-    user      = Name,
-    realname  = Name,
-    joinChans = Channels
-)
 
 IrcThing.connect()
-
-var AuthorizedNicks : seq[string] = @[]
 
 while true:
     var Event: TIRCEvent
@@ -57,88 +190,48 @@ while true:
 
 proc HandlePrivMsg(Event : TIrcEvent) =
     
-    let ElevatedCommands : seq[string] = @[ "!quit",
-                                            "!join",
-                                            "!part"  ]
-
     let Message = Event.params[Event.params.high]
 
     if (len Message) < 1:
-        echo "(II) HandleMessage : nil message handled"
+        echo "(II) HandlePrivMsg : nil message, doing nothing"
         return
 
-    if Message[0] == '!':
-        let Tokens = split(Message, " ")
+    let Tokens = TokenizeMessage(Event)
 
+    if Message[0] == '!':
         if (len Tokens) < 1:
-            echo "(EE) HandleMessage : nil command!"
+            echo "(EE) HandlePrivMsg : nil command, doing nothing"
             return
 
         let Command = Tokens[0]
-        echo "(II) HandleMessage : Command : " & Command
-
-        if Command in ElevatedCommands and not(Event.nick in AuthorizedNicks):
-            echo "(II) HandleMessage : Unauthorized access!"
+        if CommandTable.hasKey(Command):
+            echo "(II) HandlePrivMsg : Command is '" & Command & "'"
+            var CommandProc = CommandTable[Command]
+            #TODO(blandcr) - We might need to pass a ref to IrcThing into the
+            #                module if there are more complicated operates to
+            #                perform...
+            let OutputMessage = CommandProc(Event)
+            if OutputMessage != nil:
+                IrcThing.send(
+                    "PRIVMSG " & Event.origin & " :" & CommandProc(Event)
+                )
+        else:
+            echo "(II) HandlePrivMsg : Command '" & Command & "' doesn't exist."
+    elif Message[0] == '@':
+        if (len Tokens) < 1:
+            echo "(EE) HandlePrivMsg : nil command, doing nothing"
             return
 
-        case Command
-        of "!auth":
-            HandleAuth(Tokens, Event.nick)
-        of "!jerk":
-            JeRKoFf(Tokens, Event.origin)
-        of "!quit":
-            HandleExit(Tokens)
-        of "!join":
-            JoinChannel(Tokens)
-        of "!part":
-            PartChannel(Tokens)
+        let Command = Tokens[0]
+        if Event.nick in AuthorizedNicks and CommandTable.hasKey(Command):
+            echo "(II) HandlePrivMsg : Command is '" & Command & "'"
+            var CommandProc = CommandTable[Command]
+            let OutputMessage = CommandProc(Event)
+            if OutputMessage != nil:
+                IrcThing.send(
+                    "PRIVMSG " & Event.origin & " :" & CommandProc(Event)
+                )
         else:
-            echo "(II) Invalid command."
-    return
-
-proc JoinChannel(Tokens : seq[string]) =
-    if (len Tokens) < 2:
-        echo "(EE) JoinChannel : Improper format"
-        return
-
-    let Channel = Tokens[1]
-    
-    var Key = ""
-    if (len Tokens) > 2:
-        Key = Tokens[2]
-
-    if Channel in Channels:
-        echo "(II) JoinChannel : Already in this channel!"
-    else:
-        echo "(II) JoinChannel : " & Channel
-        Channels.add(Channel)
-        IrcThing.join(Channel, Key)
-    return
-
-proc PartChannel(Tokens : seq[string]) =
-    if (len Tokens) < 2:
-        echo "(EE) PartChannel : Improper format"
-        return
-
-    let Channel = Tokens[1]
-
-    if Channel in Channels:
-        echo "(II) PartChannel : " & Channel
-        IrcThing.part(Channel, "")
-        Channels.delete(find(Channels, Channel))
-    return
-
-proc HandleAuth(Tokens : seq[string], Nick : string) =
-    if Tokens[1] == "CORGIFREEZER!":
-        AuthorizedNicks.add(Nick)
-    return
-
-proc JErKOff(Tokens : seq[string], Channel : string) =
-    send(IrCThinG, "PRIVMSG " & Channel & " :" & JeRkLiNEs[random(JerKLiNes.high)])
-    return
-
-proc HandleExit(Tokens : seq[string]) =
-    send(IrcThing, "QUIT  :snerf borf", sendImmediately=true)
-    close(IrcThing)
-    quit(0)
+            echo "(II) Unauthorized attempt for command '" & Command & "'"
+            return
 
