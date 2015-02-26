@@ -113,7 +113,6 @@ proc JoinChannel(Event : TIrcEvent) : string =
         echo "(II) JoinChannel : Already in this channel!"
     else:
         echo "(II) JoinChannel : " & Channel
-        Channels.add(Channel)
         IrcThing.join(Channel, Key)
     return nil
 
@@ -128,7 +127,6 @@ proc PartChannel(Event : TIrcEvent) : string =
     if Channel in Channels:
         echo "(II) PartChannel : " & Channel
         IrcThing.part(Channel, "")
-        Channels.delete(find(Channels, Channel))
     return
 
 #TODO(blandcr) - move this garbage out into a module
@@ -146,6 +144,9 @@ proc LoADJErKS() : seq[string] =
                 res.add(jstr)
     return res
 
+#TODO(blandcr) - LoadConfig should return the config options. for now we'll just
+#                use a hack.
+var InitialChannels : seq[string] = @[]
 proc LoadConfig(ConfigFile : string) : bool =
     let Config = readFile(ConfigFile)
     proc ProcessConfigLine(ConfigLine : string) : seq[string] =
@@ -178,8 +179,9 @@ proc LoadConfig(ConfigFile : string) : bool =
         of "server"   : IrcServer = OptionValue
         of "channels" :
             for Channel in split(OptionValue, ","):
-                Channels.add(strip(Channel))
+                InitialChannels.add(strip(Channel))
         of "password" : Password  = OptionValue
+        else          : discard
     return true
 
 
@@ -215,6 +217,8 @@ for Kind, Key, Value in getopt():
         else:
             echo "(EE) Invalid configuration file specified. Exiting."
             quit(0)
+    else:
+        discard
 
 if not ConfigSpecified:
     echo "(EE) No config file specified!!! Exiting."
@@ -225,7 +229,7 @@ IrcThing = newIrc(
     nick      = Name,
     user      = Name,
     realname  = Name,
-    joinChans = Channels
+    joinChans = InitialChannels
 )
 
 #==--- The part that does stuff --------------------------------------------==##
@@ -241,8 +245,24 @@ while true:
         of EvDisconnected, EvTimeout:
             IrcThing.connect()
         of EvMsg:
-            if Event.cmd == MPrivMsg:
+            case Event.cmd
+            of MPrivMsg:
+                echo "(II) Seeing MPrivMsg..."
                 HandlePrivMsg(Event)
+            of MJoin:
+                echo "(II) Seeing MJoin... " & Event.origin
+                Channels.add(Event.origin)
+                echo Channels
+            of MPart:
+                echo "(II) Seeing MPart... " & Event.origin
+                Channels.delete(find(Channels, Event.origin))
+                echo Channels
+            of MKick:
+                echo "(II) Seeimg MKick... " & Event.origin
+                Channels.delete(find(Channels, Event.origin))
+                echo Channels
+            else:
+                discard
             echo(Event.raw)
 
 proc HandlePrivMsg(Event : TIrcEvent) =
