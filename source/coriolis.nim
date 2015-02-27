@@ -9,7 +9,8 @@ import dynlib, os, tables, sets
 
 ##==--- Types
 type
-    TCommandProc  = proc(Event : TIrcEvent) : string
+    TCommandRet   = proc(IrcConnection : PIrc)
+    TCommandProc  = proc(Event : TIrcEvent) : TCommandRet
     TCommandEntry = object
         Proc : TCommandProc
         Key  : string
@@ -75,31 +76,38 @@ proc TokenizeMessage(Event : TIrcEvent) : seq[string] =
     else:
         return split(Message, " ")
 
-proc Authenticate(Event : TIrcEvent) : string =
+proc Authenticate(Event : TIrcEvent) : TCommandRet =
     let Tokens = TokenizeMessage(Event)
+    var Message = "User " & Event.nick
     if (len Tokens) >= 2 and Tokens[1] == Password:
         AuthorizedNicks.add(Event.nick)
-        return "User " & Event.nick & " authorized for me!"
+        Message &= " authorized for me!"
     else:
-        return "User " & Event.nick & " does not know shit."
+        Message &= " doesn't know how to type ;_;"
+    return proc(IrcConnection : PIrc) =
+        IrcConnection.privmsg(Event.origin, Message)
 
-proc LoadModule(Event : TIrcEvent) : string =
+proc LoadModule(Event : TIrcEvent) : TCommandRet =
     let Tokens = TokenizeMessage(Event)
     if (len Tokens) == 2:
         let ModuleName = Tokens[1]
         let Module = LoadModule(ModuleName)
-        if Module == nil:
-            return "Module '" & ModuleName & "' cannot be found!!!"
-        else:
-            return "Module '" & ModuleName & "' loaded!"
+        let Message = if Module == nil: "No module '" & ModuleName & "' exists!"
+                      else:             "Module '" & ModuleName & "' loaded!"
+        return proc(IrcConnection : PIrc) =
+            IrcConnection.privmsg(Event.origin, Message)
     else:
-        return "Incorrect syntax. Syntax is: '!load ModuleName'"
+        return proc(IrcConnection : PIrc) =
+            IrcConnection.privmsg(
+                Event.origin, "Incorrect syntax. Syntax is: '!load ModuleName'"
+            )
 
-proc JoinChannel(Event : TIrcEvent) : string =
+proc JoinChannel(Event : TIrcEvent) : TCommandRet =
     let Tokens = TokenizeMessage(Event)
     if (len Tokens) < 2:
         echo "(EE) JoinChannel : Improper format"
-        return nil
+        return proc(IrcConnection : PIrc) =
+            IrcConnection.privmsg(Event.origin, "SQL JOIN QUERIES NOT ACCEPTED")
 
     let Channel = Tokens[1]
     
@@ -111,23 +119,31 @@ proc JoinChannel(Event : TIrcEvent) : string =
 
     if Channel in Channels:
         echo "(II) JoinChannel : Already in this channel!"
+        return proc(IrcConnection : PIrc) =
+            IrcConnection.privmsg(Event.origin, "Already there, bub.")
     else:
         echo "(II) JoinChannel : " & Channel
-        IrcThing.join(Channel, Key)
-    return nil
+        return proc(IrcConnection : PIrc) =
+            IrcConnection.privmsg(Event.origin, "ACKNOWLEDGED, COMMANDER")
+            IrcConnection.join(Channel, Key)
 
-proc PartChannel(Event : TIrcEvent) : string =
+proc PartChannel(Event : TIrcEvent) : TCommandRet =
     let Tokens = TokenizeMessage(Event)
     if (len Tokens) < 2:
         echo "(EE) PartChannel : Improper format"
-        return nil
+        return proc(IrcConnection : PIrc) =
+            IrcConnection.privmsg(Event.origin, "Gotta gotta type 'em all")
 
     let Channel = Tokens[1]
 
     if Channel in Channels:
         echo "(II) PartChannel : " & Channel
-        IrcThing.part(Channel, "")
-    return
+        return proc(IrcConnection : PIrc) =
+            IrcConnection.privmsg(Event.origin, "HI-YO SILVER! AWAY!")
+            IrcConnection.part(Channel, "Some berk told me to leave")
+    else:
+        return proc(IrcConnection : PIrc) =
+            IrcConnection.privmsg(Event.origin, "Can't leave whatcha don't got")
 
 #TODO(blandcr) - move this garbage out into a module
 proc LoADJErKS() : seq[string] =
@@ -143,6 +159,12 @@ proc LoADJErKS() : seq[string] =
                 let jstr = strip line
                 res.add(jstr)
     return res
+
+let JerkLines = LoadJerks()
+        
+proc JErKOff(Event : TIrcEvent) : TCommandRet =
+    return proc(IrcConnection : PIrc) =
+        IrcConnection.privmsg(Event.origin, JeRkLiNEs[random(JerKLiNes.high)])
 
 #TODO(blandcr) - LoadConfig should return the config options. for now we'll just
 #                use a hack.
@@ -184,11 +206,6 @@ proc LoadConfig(ConfigFile : string) : bool =
         else          : discard
     return true
 
-
-let JerkLines = LoadJerks()
-        
-proc JErKOff(Event : TIrcEvent) : string =
-    return JeRkLiNEs[random(JerKLiNes.high)]
 
 discard RegisterCommands(@[
     TCommandEntry(Key : "!auth", Proc : Authenticate),
@@ -287,11 +304,9 @@ proc HandlePrivMsg(Event : TIrcEvent) =
             #TODO(blandcr) - We might need to pass a ref to IrcThing into the
             #                module if there are more complicated operates to
             #                perform...
-            let OutputMessage = CommandProc(Event)
-            if OutputMessage != nil:
-                IrcThing.send(
-                    "PRIVMSG " & Event.origin & " :" & CommandProc(Event)
-                )
+            let Action = CommandProc(Event)
+            if Action != nil:
+                Action(IrcThing)
         else:
             echo "(II) HandlePrivMsg : Command '" & Command & "' doesn't exist."
     elif Message[0] == '@':
@@ -303,11 +318,9 @@ proc HandlePrivMsg(Event : TIrcEvent) =
         if Event.nick in AuthorizedNicks and CommandTable.hasKey(Command):
             echo "(II) HandlePrivMsg : Command is '" & Command & "'"
             var CommandProc = CommandTable[Command]
-            let OutputMessage = CommandProc(Event)
-            if OutputMessage != nil:
-                IrcThing.send(
-                    "PRIVMSG " & Event.origin & " :" & CommandProc(Event)
-                )
+            let Action = CommandProc(Event)
+            if Action != nil:
+                Action(IrcThing)
         else:
             echo "(II) Unauthorized attempt for command '" & Command & "'"
             return
