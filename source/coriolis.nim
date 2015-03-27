@@ -2,15 +2,34 @@ import iRc, sTrUtIlS, mATH
 
 import dynlib, os, tables, sets
 
-
-###############
-
 ##==--- Module System ------------------------------------------------------==##
 
 ##==--- Types
+
 type
-    TCommandRet   = proc(IrcConnection : PIrc)
-    TCommandProc  = proc(Event : TIrcEvent) : TCommandRet
+    TActionType {.pure.} = enum
+        PrivMsg,
+        Notice,
+        Join,
+        Part,
+        Close,
+        Connect,
+        Reconnect,
+        SendRaw
+
+    TCommandAction = object
+        Action    : TActionType
+        Arguments : seq[string]
+    
+    TCommandRet = seq[TCommandAction]
+
+    TCommandArgs = object
+        Source    : string
+        Channel   : string
+        Arguments : string
+
+    TCommandProc  = proc(Args : TCommandArgs) : TCommandRet
+
     TCommandEntry = object
         Proc : TCommandProc
         Key  : string
@@ -67,83 +86,103 @@ var
     IrcThing : PIrc
 #==--- Default Commands
 
-proc TokenizeMessage(Event : TIrcEvent) : seq[string] =
-    let Message = Event.params[Event.params.high]
+proc Authenticate(Args : TCommandArgs) : TCommandRet =
+    let Tokens = split(Args.Arguments, " ")
+    var Message = "User " & Args.Source
     
-    if (len Message) < 1:
-        echo "(II) TokenizeMessage : nil message, no tokens"
-        return nil
-    else:
-        return split(Message, " ")
-
-proc Authenticate(Event : TIrcEvent) : TCommandRet =
-    let Tokens = TokenizeMessage(Event)
-    var Message = "User " & Event.nick
-    if (len Tokens) >= 2 and Tokens[1] == Password:
-        AuthorizedNicks.add(Event.nick)
+    if (len Tokens) == 1 and Tokens[0] == Password:
+        AuthorizedNicks.add(Args.Source)
         Message &= " authorized for me!"
     else:
         Message &= " doesn't know how to type ;_;"
-    return proc(IrcConnection : PIrc) =
-        IrcConnection.privmsg(Event.origin, Message)
+    return @[TCommandAction(
+        Action    : TActionType.PrivMsg,
+        Arguments : @[Args.Channel, Message]
+    )]
 
-proc LoadModule(Event : TIrcEvent) : TCommandRet =
-    let Tokens = TokenizeMessage(Event)
-    if (len Tokens) == 2:
-        let ModuleName = Tokens[1]
+proc LoadModule(Args : TCommandArgs) : TCommandRet =
+    let Tokens = split(Args.Arguments, " ")
+    if (len Tokens) == 1:
+        let ModuleName = Tokens[0]
         let Module = LoadModule(ModuleName)
         let Message = if Module == nil: "No module '" & ModuleName & "' exists!"
                       else:             "Module '" & ModuleName & "' loaded!"
-        return proc(IrcConnection : PIrc) =
-            IrcConnection.privmsg(Event.origin, Message)
+        return @[TCommandAction(
+            Action    : TActionType.PrivMsg,
+            Arguments : @[Args.Channel, Message]
+        )]
     else:
-        return proc(IrcConnection : PIrc) =
-            IrcConnection.privmsg(
-                Event.origin, "Incorrect syntax. Syntax is: '!load ModuleName'"
-            )
+        return @[TCommandAction(
+            Action    : TActionType.PrivMsg,
+            Arguments : @[
+                Args.Channel,
+                "Incorrect syntax. Syntax is: `!load ModuleName`"
+            ]
+        )]
 
-proc JoinChannel(Event : TIrcEvent) : TCommandRet =
-    let Tokens = TokenizeMessage(Event)
-    if (len Tokens) < 2:
+proc JoinChannel(Args : TCommandArgs) : TCommandRet =
+    let Tokens = split(Args.Arguments, " ")
+    if (len Tokens) < 1:
         echo "(EE) JoinChannel : Improper format"
-        return proc(IrcConnection : PIrc) =
-            IrcConnection.privmsg(Event.origin, "SQL JOIN QUERIES NOT ACCEPTED")
+        return @[TCommandAction(
+            Action    : TActionType.PrivMsg,
+            Arguments : @[Args.Channel, "SQL JOIN QUERIES NOT ACCEPTED"]
+        )]
 
-    let Channel = Tokens[1]
+    let Channel = Tokens[0]
     
     let Key =
-            if (len Tokens) > 2 :
-                Tokens[2]
+            if (len Tokens) > 1 :
+                Tokens[1]
             else :
                 ""
 
     if Channel in Channels:
         echo "(II) JoinChannel : Already in this channel!"
-        return proc(IrcConnection : PIrc) =
-            IrcConnection.privmsg(Event.origin, "Already there, bub.")
+        return @[TCommandAction(
+            Action    : TActionType.PrivMsg,
+            Arguments : @[Args.Channel, "Already there, bub."]
+        )]
     else:
-        echo "(II) JoinChannel : " & Channel
-        return proc(IrcConnection : PIrc) =
-            IrcConnection.privmsg(Event.origin, "ACKNOWLEDGED, COMMANDER")
-            IrcConnection.join(Channel, Key)
+        return @[
+            TCommandAction(
+                Action    : TActionType.PrivMsg,
+                Arguments : @[Args.Channel, "ACKNOWLEDGED, COMMANDER"]
+            ),
+            TCommandAction(
+                Action    : TActionType.Join,
+                Arguments : @[Channel, Key]
+            )
+        ]
 
-proc PartChannel(Event : TIrcEvent) : TCommandRet =
-    let Tokens = TokenizeMessage(Event)
-    if (len Tokens) < 2:
+proc PartChannel(Args : TCommandArgs) : TCommandRet =
+    let Tokens = split(Args.Arguments, " ")
+    if (len Tokens) < 1:
         echo "(EE) PartChannel : Improper format"
-        return proc(IrcConnection : PIrc) =
-            IrcConnection.privmsg(Event.origin, "Gotta gotta type 'em all")
+        return @[TCommandAction(
+            Action    : TActionType.PrivMsg,
+            Arguments : @[Args.Channel, "Gotta gotta type 'em all"]
+        )]
 
-    let Channel = Tokens[1]
+    let Channel = Tokens[0]
 
     if Channel in Channels:
         echo "(II) PartChannel : " & Channel
-        return proc(IrcConnection : PIrc) =
-            IrcConnection.privmsg(Event.origin, "HI-YO SILVER! AWAY!")
-            IrcConnection.part(Channel, "Some berk told me to leave")
+        return @[
+            TCommandAction(
+                Action    : TActionType.PrivMsg,
+                Arguments : @[Args.Channel, "HI-YO SILVER! AWAY!"]
+            ),
+            TCommandAction(
+                Action    : TActionType.Part,
+                Arguments : @[Channel, "Some berk told me to leave"]
+            )
+        ]
     else:
-        return proc(IrcConnection : PIrc) =
-            IrcConnection.privmsg(Event.origin, "Can't leave whatcha don't got")
+        return @[TCommandAction(
+            Action    : TActionType.PrivMsg,
+            Arguments : @[Args.Channel, "Can't leave whatcha don't got"]
+        )]
 
 #TODO(blandcr) - move this garbage out into a module
 proc LoADJErKS() : seq[string] =
@@ -162,9 +201,11 @@ proc LoADJErKS() : seq[string] =
 
 let JerkLines = LoadJerks()
         
-proc JErKOff(Event : TIrcEvent) : TCommandRet =
-    return proc(IrcConnection : PIrc) =
-        IrcConnection.privmsg(Event.origin, JeRkLiNEs[random(JerKLiNes.high)])
+proc JErKOff(Args : TCommandArgs) : TCommandRet =
+    return @[TCommandAction(
+        Action    : TActionType.PrivMsg,
+        Arguments : @[Args.Channel, JeRkLiNEs[random(JerKLiNes.high)]]
+    )]
 
 #TODO(blandcr) - LoadConfig should return the config options. for now we'll just
 #                use a hack.
@@ -282,6 +323,44 @@ while true:
                 discard
             echo(Event.raw)
 
+proc BindAction(IrcThing : PIRC, Action : TCommandAction) : proc() =
+    case Action.Action
+    of TActionType.PrivMsg:
+        if (len Action.Arguments) != 2:
+            echo "(EE) Invalid number of arguments for binding PrivMsg"
+            return proc() = discard
+        return proc() =
+            IrcThing.privmsg(Action.Arguments[0], Action.Arguments[1])
+    of TActionType.Notice:
+        if (len Action.Arguments) != 2:
+            echo "(EE) Invalid number of arguments for binding Notice"
+            return proc() = discard
+        return proc() =
+            IrcThing.notice(Action.Arguments[0], Action.Arguments[1])
+    of TActionType.Join:
+        if (len Action.Arguments) != 2:
+            echo "(EE) Invalid number of arguments for binding Join"
+            return proc() = discard
+        return proc() =
+            IrcThing.join(Action.Arguments[0], Action.Arguments[1])
+    of TActionType.Part:
+        if (len Action.Arguments) != 2:
+            echo "(EE) Invalid number of arguments for binding Part"
+            return proc() = discard
+        return proc() =
+            IrcThing.part(Action.Arguments[0], Action.Arguments[1])
+    of TActionType.Close:
+        return proc() = discard
+    of TActionType.Connect:
+        return proc() = discard
+    of TActionType.Reconnect:
+        return proc() = discard
+    of TActionType.SendRaw:
+        if (len Action.Arguments) != 1:
+            echo "(EE) Invalid number of arguments for binding SendRaw"
+        return proc() =
+            IrcThing.send(Action.Arguments[0])
+
 proc HandlePrivMsg(Event : TIrcEvent) =
     
     let Message = Event.params[Event.params.high]
@@ -289,10 +368,10 @@ proc HandlePrivMsg(Event : TIrcEvent) =
     if (len Message) < 1:
         echo "(II) HandlePrivMsg : nil message, doing nothing"
         return
+    
+    let Tokens = split(Message, " ")
 
-    let Tokens = TokenizeMessage(Event)
-
-    if Message[0] == '!':
+    if Message[0] == '!' and (len Message) > 1:
         if (len Tokens) < 1:
             echo "(EE) HandlePrivMsg : nil command, doing nothing"
             return
@@ -304,9 +383,13 @@ proc HandlePrivMsg(Event : TIrcEvent) =
             #TODO(blandcr) - We might need to pass a ref to IrcThing into the
             #                module if there are more complicated operates to
             #                perform...
-            let Action = CommandProc(Event)
-            if Action != nil:
-                Action(IrcThing)
+            let Actions = CommandProc(TCommandArgs(
+                Source    : Event.nick,
+                Channel   : Event.origin,
+                Arguments : join(Tokens[1..Tokens.high])
+            ))
+            for Action in Actions:
+                BindAction(IrcThing, Action)()
         else:
             echo "(II) HandlePrivMsg : Command '" & Command & "' doesn't exist."
     elif Message[0] == '@':
@@ -318,9 +401,13 @@ proc HandlePrivMsg(Event : TIrcEvent) =
         if Event.nick in AuthorizedNicks and CommandTable.hasKey(Command):
             echo "(II) HandlePrivMsg : Command is '" & Command & "'"
             var CommandProc = CommandTable[Command]
-            let Action = CommandProc(Event)
-            if Action != nil:
-                Action(IrcThing)
+            let Actions = CommandProc(TCommandArgs(
+                Source    : Event.nick,
+                Channel   : Event.origin,
+                Arguments : join(Tokens[1..Tokens.high])
+            ))
+            for Action in Actions:
+                BindAction(IrcThing, Action)()
         else:
             echo "(II) Unauthorized attempt for command '" & Command & "'"
             return
