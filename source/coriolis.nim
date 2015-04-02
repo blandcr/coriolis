@@ -8,7 +8,7 @@ import module_interface
 
 ##==--- Constants
 # TODO(blandcr) - get this from a config file
-let ModulePath = "./modules"
+let ModulePath = ""
 
 ##==--- Globals
 var
@@ -26,7 +26,7 @@ proc LoadModule(ModuleName : string) : LibHandle =
                             elif defined(macosx) : ".dylib"
                             else                 : ".so"
     #var Module = loadLib(ModulePath & "/" & ModuleName & "." & ModuleExtension)
-    var Module = loadLib("jerk.dll")
+    var Module = loadLib(ModulePath & ModuleName & ModuleExtension)
     if Module == nil:
         return Module
     
