@@ -4,35 +4,7 @@ import dynlib, os, tables, sets
 
 ##==--- Module System ------------------------------------------------------==##
 
-##==--- Types
-
-type
-    TActionType {.pure.} = enum
-        PrivMsg,
-        Notice,
-        Join,
-        Part,
-        Close,
-        Connect,
-        Reconnect,
-        SendRaw
-
-    TCommandAction = object
-        Action    : TActionType
-        Arguments : seq[string]
-    
-    TCommandRet = seq[TCommandAction]
-
-    TCommandArgs = object
-        Source    : string
-        Channel   : string
-        Arguments : string
-
-    TCommandProc  = proc(Args : TCommandArgs) : TCommandRet
-
-    TCommandEntry = object
-        Proc : TCommandProc
-        Key  : string
+import module_interface
 
 ##==--- Constants
 # TODO(blandcr) - get this from a config file
@@ -53,15 +25,19 @@ proc LoadModule(ModuleName : string) : LibHandle =
     const ModuleExtension = when defined(win32)  : ".dll"
                             elif defined(macosx) : ".dylib"
                             else                 : ".so"
-    var Module = loadLib(ModulePath & "/" & ModuleName & "." & ModuleExtension)
+    #var Module = loadLib(ModulePath & "/" & ModuleName & "." & ModuleExtension)
+    var Module = loadLib("jerk.dll")
     if Module == nil:
         return Module
     
     type
-        TGCP = proc() : seq[TCommandEntry] {.cdecl}
+        TGCP = proc() : seq[TCommandEntry] {.cdecl.}
 
     let GetCommandsProc =
         cast[TGCP](symAddr(Module, "GetCommands"))
+    if GetCommandsProc == nil:
+        return nil
+    
     let Commands = GetCommandsProc()
     
     discard RegisterCommands(Commands)
@@ -184,29 +160,6 @@ proc PartChannel(Args : TCommandArgs) : TCommandRet =
             Arguments : @[Args.Channel, "Can't leave whatcha don't got"]
         )]
 
-#TODO(blandcr) - move this garbage out into a module
-proc LoADJErKS() : seq[string] =
-    var res : seq[string] = @[]
-    let JerkXml = reADfIlE("source/jerkcity.xml")
-    for lInE in JeRkxML.sPlItLINeS:
-        if line[0] != '<':
-            let segs = split(line, ":")
-            if segs.len > 1:
-                let jstr = strip segs[1]
-                res.add(jstr)
-            else:
-                let jstr = strip line
-                res.add(jstr)
-    return res
-
-let JerkLines = LoadJerks()
-        
-proc JErKOff(Args : TCommandArgs) : TCommandRet =
-    return @[TCommandAction(
-        Action    : TActionType.PrivMsg,
-        Arguments : @[Args.Channel, JeRkLiNEs[random(JerKLiNes.high)]]
-    )]
-
 #TODO(blandcr) - LoadConfig should return the config options. for now we'll just
 #                use a hack.
 var InitialChannels : seq[string] = @[]
@@ -253,7 +206,6 @@ discard RegisterCommands(@[
     TCommandEntry(Key : "@load", Proc : LoadModule),
     TCommandEntry(Key : "@part", Proc : PartChannel),
     TCommandEntry(Key : "@join", Proc : JoinChannel),
-    TCommandEntry(Key : "!jerk", Proc : JerkOff)
 ])
 
 proc HandleExit(Tokens : seq[string]) =
