@@ -16,6 +16,7 @@ type
     TCommandAction* = object
         Action*    : TActionType
         Arguments* : seq[string]
+        Immediate* : bool
     
     TCommandRet* = seq[TCommandAction]
 
@@ -29,4 +30,6 @@ type
     TCommandEntry* = object
         Proc* : TCommandProc
         Key*  : string
+        Info* : string
+        Help* : seq[string]
 

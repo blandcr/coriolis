@@ -12,13 +12,13 @@ let ModulePath = ""
 
 ##==--- Globals
 var
-    CommandTable = initTable[string, TCommandProc]()
+    CommandTable = initTable[string, TCommandEntry]()
 
 ##==--- Procs
 proc RegisterCommands(Commands : seq[TCommandEntry]) : bool =
     for Command in Commands:
         if not(CommandTable.hasKey(Command.Key)):
-            CommandTable[Command.Key] = Command.Proc
+            CommandTable[Command.Key] = Command
     return true
 
 proc LoadModule(ModuleName : string) : LibHandle =
@@ -61,6 +61,43 @@ var
 
     IrcThing : PIrc
 #==--- Default Commands
+
+proc GetHelp(Args : TCommandArgs) : TCommandRet =
+    proc MakeNotice(Message : string) : TCommandAction =
+        return TCommandAction(
+            Action    : TActionType.PrivMsg,
+            Arguments : @[Args.Source, Message]
+        )
+    let Tokens = split(Args.Arguments, " ")
+    if (len Tokens) == 0:
+        var HelpMsgs = @[MakeNotice("Help for " & Name)]
+        HelpMsgs.add(MakeNotice("The following commands are available:"))
+        for Command in CommandTable.values:
+            let Info = if Command.Info != nil : Command.Info
+                       else                   : ""
+            HelpMsgs.add(
+                MakeNotice("    " & Command.Key & " - " & Info)
+            )
+        return HelpMsgs
+    elif (len Tokens) == 1:
+        var HelpMsgs : seq[TCommandAction] = @[MakeNotice(
+            "Help for command `" & Tokens[0] & "`:"
+        )]
+        if CommandTable.hasKey(Tokens[0]):
+            if CommandTable[Tokens[0]].Help == nil:
+                HelpMsgs.add(MakeNotice(
+                    "No help available for command `" & Tokens[0] & "`."
+                ))
+            else:
+                for Line in CommandTable[Tokens[0]].Help:
+                    HelpMsgs.add(MakeNotice(Line))
+        else:
+            HelpMsgs.add(
+                MakeNotice("Command `" & Tokens[0] & "` does not exist!")
+            )
+        return HelpMsgs
+    else:
+        return @[MakeNotice("Incorrect usage. See `!help !help`")]
 
 proc Authenticate(Args : TCommandArgs) : TCommandRet =
     let Tokens = split(Args.Arguments, " ")
@@ -203,6 +240,7 @@ proc LoadConfig(ConfigFile : string) : bool =
 
 discard RegisterCommands(@[
     TCommandEntry(Key : "!auth", Proc : Authenticate),
+    TCommandEntry(Key : "!help", Proc : GetHelp),
     TCommandEntry(Key : "@load", Proc : LoadModule),
     TCommandEntry(Key : "@part", Proc : PartChannel),
     TCommandEntry(Key : "@join", Proc : JoinChannel),
@@ -331,7 +369,7 @@ proc HandlePrivMsg(Event : TIrcEvent) =
         let Command = Tokens[0]
         if CommandTable.hasKey(Command):
             echo "(II) HandlePrivMsg : Command is '" & Command & "'"
-            var CommandProc = CommandTable[Command]
+            var CommandProc = CommandTable[Command].Proc
             #TODO(blandcr) - We might need to pass a ref to IrcThing into the
             #                module if there are more complicated operates to
             #                perform...
@@ -352,7 +390,7 @@ proc HandlePrivMsg(Event : TIrcEvent) =
         let Command = Tokens[0]
         if Event.nick in AuthorizedNicks and CommandTable.hasKey(Command):
             echo "(II) HandlePrivMsg : Command is '" & Command & "'"
-            var CommandProc = CommandTable[Command]
+            var CommandProc = CommandTable[Command].Proc
             let Actions = CommandProc(TCommandArgs(
                 Source    : Event.nick,
                 Channel   : Event.origin,
