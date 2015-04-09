@@ -239,11 +239,62 @@ proc LoadConfig(ConfigFile : string) : bool =
 
 
 discard RegisterCommands(@[
-    TCommandEntry(Key : "!auth", Proc : Authenticate),
-    TCommandEntry(Key : "!help", Proc : GetHelp),
-    TCommandEntry(Key : "@load", Proc : LoadModule),
-    TCommandEntry(Key : "@part", Proc : PartChannel),
-    TCommandEntry(Key : "@join", Proc : JoinChannel),
+    TCommandEntry(
+        Key  : "!auth",
+        Proc : Authenticate,
+        Info : "Authorizes a user for access to elevated commands.",
+        Help : @[
+            "This command is used to gain access to elevated commands such as",
+            "joining and parting channels. Usage is as follows:",
+            "    `!auth <PASSWORD>`",
+            "where <PASSWORD> is the password you have been provided. Once",
+            "authenticated your user name will remain authenticated for as",
+            "long as the bot remains alive. This is a bad thing and will be",
+            "changed so that your authentication will remain only as long as",
+            "the bot is aware of you."
+        ]
+    ),
+    TCommandEntry(
+        Key  : "!help",
+        Proc : GetHelp,
+        Info : "Displays help information.",
+        Help : @[
+            "This command is used to gain help regarding various other",
+            "commands. It has two usage modes:",
+            "    `!help`",
+            "    `!help <COMMAND>`",
+            "The first usage will display a listing of all available commands",
+            "and a short description for each. The second usage will display",
+            "detailed help for a given command."
+        ]
+    ),
+    TCommandEntry(
+        Key  : "@load",
+        Proc : LoadModule,
+        Info : "Loads a module.",
+        Help : @[
+            "This command is used to load a module into the bot. Usage:",
+            "    `@load <MODULENAME>`"
+        ]
+    ),
+    TCommandEntry(
+        Key  : "@part",
+        Proc : PartChannel,
+        Info : "Leaves a channel.",
+        Help : @[
+            "This command is used to leave a given channel. Usage:",
+            "    `@part <#CHANNEL>`"
+        ]
+    ),
+    TCommandEntry(
+        Key  : "@join",
+        Proc : JoinChannel,
+        Info : "Joins a channel.",
+        Help : @[
+            "This command is used to join a given channel. Usage:",
+            "    `@join <#CHANNEL>`"
+        ]
+    ),
 ])
 
 proc HandleExit(Tokens : seq[string]) =
