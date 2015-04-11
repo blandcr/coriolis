@@ -12,6 +12,8 @@ MODULESRCS = $(wildcard source/modules/*.nim)
 
 MODULEOBJS = $(patsubst %.nim,%.$(MODULEEXT),$(notdir $(MODULESRCS)))
 
+MODULEINCS = source/module_interface.nim
+
 # Targets
 
 all: coriolis modules
@@ -19,7 +21,7 @@ all: coriolis modules
 coriolis: coriolis.nim
 	$(NIM) $(NIMFLAGS) c coriolis.nim
 
-%.$(MODULEEXT) : source/modules/%.nim
+%.$(MODULEEXT) : source/modules/%.nim $(MODULEINCS)
 	$(NIM) $(NIMFLAGS) -p:source/ --app:lib --nimcache:.//nimcache/ c --o:../../$@ $<
 
 modules: $(MODULEOBJS)
