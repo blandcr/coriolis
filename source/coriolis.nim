@@ -1,10 +1,17 @@
-import iRc, sTrUtIlS, mATH
-
-import dynlib, os, tables, sets
+import irc
+import dynlib, os
+import tables, strutils
+from sequtils import concat
 
 ##==--- Module System ------------------------------------------------------==##
 
 import module_interface
+
+##==--- Types
+type
+    TModuleInfo = object
+        CommandKeys  : seq[string]
+        ModuleHandle : LibHandle
 
 ##==--- Constants
 # TODO(blandcr) - get this from a config file
@@ -13,23 +20,47 @@ let ModulePath = ""
 ##==--- Globals
 var
     CommandTable = initTable[string, TCommandEntry]()
+    ModuleTable  = initTable[string, TModuleInfo]()
 
 ##==--- Procs
-proc RegisterCommands(Commands : seq[TCommandEntry]) : bool =
-    for Command in Commands:
-        if not(CommandTable.hasKey(Command.Key)):
-            CommandTable[Command.Key] = Command
-    return true
+proc RegisterCommand(Command : TCommandEntry) : bool =
+    if not(CommandTable.hasKey(Command.Key)):
+        CommandTable[Command.Key] = Command
+        return true
+    else:
+        return false
+
+proc UnregisterCommand(CommandName : string) : bool =
+    if CommandTable.hasKey(CommandName):
+        CommandTable.del(CommandName)
+        return true
+    else:
+        return false
+
+proc UnloadModule(ModuleName : string) : bool =
+    if ModuleTable.hasKey(ModuleName):
+        let ModuleInfo = ModuleTable[ModuleName]
+        for CommandName in ModuleInfo.CommandKeys:
+            discard UnregisterCommand(CommandName)
+        unloadLib(ModuleInfo.ModuleHandle)
+        ModuleTable.del(ModuleName)
+        return true
+    else:
+        return false
 
 proc LoadModule(ModuleName : string) : LibHandle =
     const ModuleExtension = when defined(win32)  : ".dll"
                             elif defined(macosx) : ".dylib"
                             else                 : ".so"
+
+    if ModuleTable.hasKey(ModuleName):
+        return nil
+
     #var Module = loadLib(ModulePath & "/" & ModuleName & "." & ModuleExtension)
     var Module = loadLib(ModulePath & ModuleName & ModuleExtension)
     if Module == nil:
-        return Module
-    
+        return nil
+
     type
         TGCP = proc() : seq[TCommandEntry] {.cdecl.}
 
@@ -40,7 +71,15 @@ proc LoadModule(ModuleName : string) : LibHandle =
     
     let Commands = GetCommandsProc()
     
-    discard RegisterCommands(Commands)
+    var ModuleInfo = TModuleInfo(
+        CommandKeys  : @[],
+        ModuleHandle : Module
+    )
+
+    for Command in Commands:
+        if RegisterCommand(Command):
+            ModuleInfo.CommandKeys.add(Command.Key)
+    ModuleTable[ModuleName] = ModuleInfo
     return Module
 
 #==--- Irc Bot Logic -------------------------------------------------------==##
@@ -132,6 +171,43 @@ proc LoadModule(Args : TCommandArgs) : TCommandRet =
                 "Incorrect syntax. Syntax is: `!load ModuleName`"
             ]
         )]
+
+proc UnloadModule(Args : TCommandArgs) : TCommandRet =
+    let Tokens = split(Args.Arguments, " ")
+    if (len Tokens) == 1:
+        let ModuleName = Tokens[0]
+        if UnloadModule(ModuleName):
+            return @[TCommandAction(
+                Action    : TActionType.PrivMsg,
+                Arguments : @[
+                    Args.Channel,
+                    "Module `" & ModuleName & "` successfully unloaded!"
+                ]
+            )]
+        else:
+            return @[TCommandAction(
+                Action    : TActionType.PrivMsg,
+                Arguments : @[
+                    Args.Channel,
+                    "Unload of module `" & ModuleName & "` was unsuccessful."
+                ]
+            )]
+    else:
+        return @[TCommandAction(
+            Action    : TActionType.PrivMsg,
+            Arguments : @[
+                Args.Channel,
+                "Invalid formatting for command `UnloadModule`"
+            ]
+        )]
+
+proc ReloadModule(Args : TCommandArgs) : TCommandRet =
+    # todo(blandcr) implement correct exception behavior here:
+    #   if the unload fails for some reason then ignore the output from unload
+    #   and only return the output from load
+    let UnloadMsgs = UnloadModule(Args)
+    let LoadMsgs = LoadModule(Args)
+    return concat(UnloadMsgs, LoadMsgs)
 
 proc JoinChannel(Args : TCommandArgs) : TCommandRet =
     let Tokens = split(Args.Arguments, " ")
@@ -238,7 +314,7 @@ proc LoadConfig(ConfigFile : string) : bool =
     return true
 
 
-discard RegisterCommands(@[
+for CommandEntry in @[
     TCommandEntry(
         Key  : "!auth",
         Proc : Authenticate,
@@ -278,6 +354,24 @@ discard RegisterCommands(@[
         ]
     ),
     TCommandEntry(
+        Key  : "@reload",
+        Proc : ReloadModule,
+        Info : "Reloads a module.",
+        Help : @[
+            "This command is used to reload a module into the bot. Usage:",
+            "    `@reload <MODULENAME>`"
+        ]
+    ),
+    TCommandEntry(
+        Key  : "@unload",
+        Proc : UnloadModule,
+        Info : "Unloads a module.",
+        Help : @[
+            "This command is used to unload a module from the bot. Usage:",
+            "    `@unload <MODULENAME>`"
+        ]
+    ),
+    TCommandEntry(
         Key  : "@part",
         Proc : PartChannel,
         Info : "Leaves a channel.",
@@ -295,7 +389,8 @@ discard RegisterCommands(@[
             "    `@join <#CHANNEL>`"
         ]
     ),
-])
+]:
+    discard RegisterCommand(CommandEntry)
 
 proc HandleExit(Tokens : seq[string]) =
     send(IrcThing, "QUIT  :snerf borf", sendImmediately=true)
