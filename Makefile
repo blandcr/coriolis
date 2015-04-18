@@ -19,17 +19,15 @@ MODULEINCS = source/module_interface.nim
 all: coriolis modules
 
 coriolis: coriolis.nim
-	$(NIM) $(NIMFLAGS) c coriolis.nim
+	$(NIM) $(NIMFLAGS) --nimcache:.//build/nimcache c -o:.//build/$@ coriolis.nim
 
 %.$(MODULEEXT) : source/modules/%.nim $(MODULEINCS)
-	$(NIM) $(NIMFLAGS) -p:source/ --app:lib --nimcache:.//nimcache/ c --o:../../$@ $<
+	$(NIM) $(NIMFLAGS) -p:source/ --app:lib --nimcache:.//build/nimcache/ c --o:../../build/$@ $<
 
 modules: $(MODULEOBJS)
 
 clean:
-	rm -rf nimcache
-	rm -rf *.$(MODULEEXT)
-	rm -rf *.exe
+	rm -rf build
 
 .PHONY:	all
 .PHONY:	coriolis
